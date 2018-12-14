@@ -1,12 +1,10 @@
 package io.skymind.example;
 
-import javax.swing.*;
-import java.awt.*;
-import java.awt.image.BufferedImage;
 import org.apache.commons.lang3.ArrayUtils;
 import org.deeplearning4j.datasets.iterator.impl.MnistDataSetIterator;
-import org.deeplearning4j.nn.api.OptimizationAlgorithm;
-import org.deeplearning4j.nn.conf.*;
+import org.deeplearning4j.nn.conf.GradientNormalization;
+import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
+import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.conf.layers.*;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
@@ -16,21 +14,22 @@ import org.nd4j.linalg.activations.impl.ActivationLReLU;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.factory.Nd4j;
-import org.nd4j.linalg.learning.NoOpUpdater;
 import org.nd4j.linalg.learning.config.Adam;
 import org.nd4j.linalg.learning.config.IUpdater;
-import org.nd4j.linalg.learning.config.NoOp;
+import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.util.Arrays;
 
 public class App {
     private static final double LEARNING_RATE = 0.0002;
-    private static final double L2 = 0.01;
+    //private static final double L2 = 0.005;
     private static final double GRADIENT_THRESHOLD = 100.0;
     private static final IUpdater UPDATER = Adam.builder().learningRate(LEARNING_RATE).beta1(0.5).build();
+    private static final IUpdater UPDATER_ZERO = Sgd.builder().learningRate(0.0).build();
 
     private static JFrame frame;
     private static JPanel panel;
@@ -58,7 +57,7 @@ public class App {
                 .updater(UPDATER)
                 .gradientNormalization(GradientNormalization.RenormalizeL2PerLayer)
                 .gradientNormalizationThreshold(GRADIENT_THRESHOLD)
-                .l2(L2)
+                //.l2(L2)
                 .weightInit(WeightInit.XAVIER)
                 .activation(Activation.IDENTITY)
                 .list(genLayers())
@@ -88,7 +87,7 @@ public class App {
                 .updater(UPDATER)
                 .gradientNormalization(GradientNormalization.RenormalizeL2PerLayer)
                 .gradientNormalizationThreshold(GRADIENT_THRESHOLD)
-                .l2(L2)
+                //.l2(L2)
                 .weightInit(WeightInit.XAVIER)
                 .activation(Activation.IDENTITY)
                 .list(disLayers(UPDATER))
@@ -99,7 +98,7 @@ public class App {
 
     private static MultiLayerConfiguration gan() {
         Layer[] genLayers = genLayers();
-        Layer[] disLayers = disLayers(new NoOp()); // Freeze discriminator layers in combined network.
+        Layer[] disLayers = disLayers(UPDATER_ZERO); // Freeze discriminator layers in combined network.
         Layer[] layers = ArrayUtils.addAll(genLayers, disLayers);
 
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
@@ -107,7 +106,7 @@ public class App {
                 .updater(UPDATER)
                 .gradientNormalization(GradientNormalization.RenormalizeL2PerLayer)
                 .gradientNormalizationThreshold(GRADIENT_THRESHOLD)
-                .l2(L2)
+                //.l2(L2)
                 .weightInit(WeightInit.XAVIER)
                 .activation(Activation.IDENTITY)
                 .list(layers)
@@ -117,7 +116,7 @@ public class App {
     }
 
     public static void main(String... args) throws Exception {
-        //Nd4j.getMemoryManager().setAutoGcWindow(15000);
+        Nd4j.getMemoryManager().setAutoGcWindow(15 * 1000);
 
         MnistDataSetIterator trainData = new MnistDataSetIterator(128, true, 42);
 
@@ -130,9 +129,9 @@ public class App {
 
         copyParams(gen, dis, gan);
 
-        gen.setListeners(new PerformanceListener(50, true));
-        dis.setListeners(new PerformanceListener(50, true));
-        gan.setListeners(new PerformanceListener(50, true));
+        gen.setListeners(new PerformanceListener(10, true));
+        dis.setListeners(new PerformanceListener(10, true));
+        gan.setListeners(new PerformanceListener(10, true));
 
         trainData.reset();
 
@@ -152,10 +151,12 @@ public class App {
                 DataSet fakeSet = new DataSet(fake, Nd4j.ones(batchSize, 1));
                 DataSet fakeSet2 = new DataSet(fakeIn, Nd4j.ones(batchSize, 1));
 
-                //DataSet data = DataSet.merge(Arrays.asList(realSet, fakeSet));
+                DataSet data = DataSet.merge(Arrays.asList(realSet, fakeSet));
 
-                dis.fit(realSet);
-                dis.fit(fakeSet);
+                dis.fit(data);
+                dis.fit(data);
+                //dis.fit(realSet);
+                //dis.fit(fakeSet);
 
                 // Update the discriminator in the GAN network
                 updateGan(gen, dis, gan);
@@ -236,7 +237,7 @@ public class App {
             bi.getRaster().setSample(i % 28, i / 28, 0, pixel);
         }
         ImageIcon orig = new ImageIcon(bi);
-        Image imageScaled = orig.getImage().getScaledInstance((int) (8 * 28), (int) (8 * 28), Image.SCALE_REPLICATE);
+        Image imageScaled = orig.getImage().getScaledInstance((8 * 28), (8 * 28), Image.SCALE_REPLICATE);
 
         ImageIcon scaled = new ImageIcon(imageScaled);
 
