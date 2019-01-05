@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 
 /**
@@ -30,6 +31,14 @@ import java.util.Map;
  * @author Max Pumperla
  */
 public class GAN {
+    private static final IUpdater UPDATER_ZERO = Sgd.builder().learningRate(0.0).build();
+
+    public interface DiscriminatorProvider {
+        MultiLayerNetwork provide(IUpdater updater);
+    }
+
+    protected Supplier<MultiLayerNetwork> generatorSupplier;
+    protected DiscriminatorProvider discriminatorSupplier;
 
     protected MultiLayerNetwork generator;
     protected MultiLayerNetwork discriminator;
@@ -46,10 +55,12 @@ public class GAN {
     protected CacheMode cacheMode;
     protected long seed;
 
+    private Double[] discriminatorLearningRates;
+
 
     public GAN(Builder builder) {
-        this.generator = builder.generator;
-        this.discriminator = builder.discriminator;
+        this.generatorSupplier = builder.generator;
+        this.discriminatorSupplier = builder.discriminator;
         this.latentDim = builder.latentDimension;
         this.updater = builder.iUpdater;
         this.biasUpdater = builder.biasUpdater;
@@ -94,57 +105,81 @@ public class GAN {
     }
 
     public void fit(DataSetIterator realData, int numEpochs) {
-
-        int batchSize;
-
         for (int i = 0; i < numEpochs; i++) {
             while (realData.hasNext()) {
-
                 // Get real images as features
-                INDArray realImages = realData.next().getFeatures();
-                batchSize = (int) realImages.shape()[0];
-
-                // Sample from latent space and let the generate create fake images.
-                INDArray randomLatentData = Nd4j.rand(new int[]{batchSize, latentDim});
-                INDArray fakeImages = generator.output(randomLatentData);
-
-                // Real images are marked as "1", fake images at "0".
-                DataSet realSet = new DataSet(realImages, Nd4j.zeros(batchSize, 1));
-                DataSet fakeSet = new DataSet(fakeImages, Nd4j.ones(batchSize, 1));
-
-                // Fit the discriminator on a combined batch of real and fake images.
-                DataSet combined = DataSet.merge(Arrays.asList(realSet, fakeSet));
-                discriminator.fit(combined);
-
-                // Update the discriminator in the GAN network
-                updateGanWithDiscriminator();
-
-                // Generate a new set of adversarial examples and try to mislead the GAN by labeling them
-                // as real images
-                INDArray adversarialExamples = Nd4j.rand(new int[]{batchSize, latentDim});
-                INDArray misleadingLabels = Nd4j.ones(batchSize, 1);
-                DataSet adversarialSet = new DataSet(adversarialExamples, misleadingLabels);
-
-                // Fit the GAN on the adversarial set, trying to fool the discriminator by generating
-                // better fake images.
-                gan.fit(adversarialSet);
-
-                // Copy the GANs generator part to "generator".
-                updateGeneratorFromGan();
-
-
+                DataSet next = realData.next();
+                fit(next);
             }
             realData.reset();
         }
     }
 
+    public void fit(DataSet next) {
+        int batchSize;
+        INDArray realImages = next.getFeatures().muli(2).subi(1);
+        batchSize = (int) realImages.shape()[0];
+
+        // Sample from latent space and let the generate create fake images.
+        INDArray randomLatentData = Nd4j.rand(new int[]{batchSize, latentDim});
+        INDArray fakeImages = generator.output(randomLatentData);
+
+        // Real images are marked as "0", fake images at "1".
+        DataSet realSet = new DataSet(realImages, Nd4j.zeros(batchSize, 1));
+        DataSet fakeSet = new DataSet(fakeImages, Nd4j.ones(batchSize, 1));
+
+        // Fit the discriminator on a combined batch of real and fake images.
+        DataSet combined = DataSet.merge(Arrays.asList(realSet, fakeSet));
+
+        /*for (int i = 0; i < discriminator.getLayers().length; i++) {
+            if (discriminatorLearningRates[i] != null) {
+                discriminator.setLearningRate(i, discriminatorLearningRates[i]);
+            }
+        }*/
+
+        discriminator.fit(combined);
+        //discriminator.fit(combined);
+
+        // Update the discriminator in the GAN network
+        updateGanWithDiscriminator();
+
+        // Generate a new set of adversarial examples and try to mislead the discriminator.
+        // by labeling the fake images as real images we reward the generator when it's output
+        // tricks the discriminator.
+        INDArray adversarialExamples = Nd4j.rand(new int[]{batchSize, latentDim});
+        INDArray misleadingLabels = Nd4j.zeros(batchSize, 1);
+        DataSet adversarialSet = new DataSet(adversarialExamples, misleadingLabels);
+
+        // Set learning rate of discriminator part of gan to zero.
+        /*for (int i = generator.getLayers().length; i < gan.getLayers().length; i++) {
+            gan.setLearningRate(i, 0.0);
+        }*/
+
+        // Fit the GAN on the adversarial set, trying to fool the discriminator by generating
+        // better fake images.
+        gan.fit(adversarialSet);
+
+        // Copy the GANs generator part to "generator".
+        updateGeneratorFromGan();
+    }
+
     private void defineGan() {
+        generator = generatorSupplier.get();
+        generator.init();
+
         Layer[] genLayers = generator.getLayers();
         int numGenLayers = genLayers.length;
-        Layer[] disLayers = discriminator.getLayers();
+
+        discriminator = discriminatorSupplier.provide(updater);
+        discriminator.init();
+
+        MultiLayerNetwork ganDiscriminator = discriminatorSupplier.provide(UPDATER_ZERO);
+        ganDiscriminator.init();
+
+        Layer[] disLayers = ganDiscriminator.getLayers();
         Layer[] layers = ArrayUtils.addAll(genLayers, disLayers);
         MultiLayerConfiguration genConf = generator.getLayerWiseConfigurations();
-        MultiLayerConfiguration disConf = discriminator.getLayerWiseConfigurations();
+        MultiLayerConfiguration disConf = ganDiscriminator.getLayerWiseConfigurations();
         org.deeplearning4j.nn.conf.layers.Layer[] confLayers = new org.deeplearning4j.nn.conf.layers.Layer[layers.length];
 
         Map<Integer, InputPreProcessor> preProcessors = new HashMap<>();
@@ -171,14 +206,8 @@ public class GAN {
                 .list(confLayers)
                 .inputPreProcessors(preProcessors)
                 .build();
-
         gan = new MultiLayerNetwork(ganConf);
         gan.init();
-
-        // Set learning rate of discriminator part of gan to zero.
-        for (int i = genLayers.length; i < layers.length; i++) {
-            gan.setLearningRate(i, 0.0);
-        }
 
         // we lose proper init here, need to copy weights after
         copyParamsToGan();
@@ -221,8 +250,8 @@ public class GAN {
      * ComputationGraphConfiguration.<br>
      */
     public static class Builder implements Cloneable {
-        protected MultiLayerNetwork generator;
-        protected MultiLayerNetwork discriminator;
+        protected Supplier<MultiLayerNetwork> generator;
+        protected DiscriminatorProvider discriminator;
         protected int latentDimension;
 
         protected IUpdater iUpdater = new Sgd();
@@ -247,7 +276,7 @@ public class GAN {
          * @param generator MultilayerNetwork
          * @return Builder
          */
-        public GAN.Builder generator(MultiLayerNetwork generator) {
+        public GAN.Builder generator(Supplier<MultiLayerNetwork> generator) {
             this.generator = generator;
             return this;
         }
@@ -258,7 +287,7 @@ public class GAN {
          * @param discriminator MultilayerNetwork
          * @return Builder
          */
-        public GAN.Builder discriminator(MultiLayerNetwork discriminator) {
+        public GAN.Builder discriminator(DiscriminatorProvider discriminator) {
             this.discriminator = discriminator;
             return this;
         }
