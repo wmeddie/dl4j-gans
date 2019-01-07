@@ -30,6 +30,17 @@
             <version>1.0.0-beta3</version>
         </dependency>
 
+                <dependency>
+                    <groupId>org.nd4j</groupId>
+                    <artifactId>nd4j-cuda-10.0-platform</artifactId>
+                    <version>1.0.0-beta3</version>
+                </dependency>
+                <dependency>
+                    <groupId>org.deeplearning4j</groupId>
+                    <artifactId>deeplearning4j-cuda-10.0</artifactId>
+                    <version>1.0.0-beta3</version>
+                </dependency>
+
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -56,12 +67,12 @@
             <dependencies>
                 <dependency>
                     <groupId>org.nd4j</groupId>
-                    <artifactId>nd4j-cuda-9.0-platform</artifactId>
+                    <artifactId>nd4j-cuda-10.0-platform</artifactId>
                     <version>1.0.0-beta3</version>
                 </dependency>
                 <dependency>
                     <groupId>org.deeplearning4j</groupId>
-                    <artifactId>deeplearning4j-cuda-9.0</artifactId>
+                    <artifactId>deeplearning4j-cuda-10.0</artifactId>
                     <version>1.0.0-beta3</version>
                 </dependency>
             </dependencies>
