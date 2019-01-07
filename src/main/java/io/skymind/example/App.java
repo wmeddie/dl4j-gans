@@ -145,11 +145,10 @@ public class App {
                 int batchSize = (int)real.shape()[0];
 
                 INDArray fakeIn = Nd4j.rand(new int[]{batchSize,  100});
-                INDArray fake = gen.output(fakeIn, false);
+                INDArray fake = gan.activateSelectedLayers(0, gen.getLayers().length - 1, fakeIn);
 
                 DataSet realSet = new DataSet(real, Nd4j.zeros(batchSize, 1));
                 DataSet fakeSet = new DataSet(fake, Nd4j.ones(batchSize, 1));
-                DataSet fakeSet2 = new DataSet(fakeIn, Nd4j.ones(batchSize, 1));
 
                 DataSet data = DataSet.merge(Arrays.asList(realSet, fakeSet));
 
@@ -165,15 +164,20 @@ public class App {
                 //gan.fit(fakeSet2);
 
 
+
                 // Copy the GANs generator to gen.
-                updateGen(gen, gan);
+                //updateGen(gen, gan);
 
                 if (j % 10 == 1) {
                     System.out.println("Iteration " + j + " Visualizing...");
                     INDArray[] samples = new INDArray[9];
+                    DataSet fakeSet2 = new DataSet(fakeIn, Nd4j.ones(batchSize, 1));
+
                     for (int k = 0; k < 9; k++) {
                         INDArray input = fakeSet2.get(k).getFeatures();
-                        samples[k] = gen.output(input, false);
+                        //samples[k] = gen.output(input, false);
+                        samples[k] = gan.activateSelectedLayers(0, gen.getLayers().length - 1, input);
+
                     }
                     visualize(samples);
                 }
