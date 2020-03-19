@@ -6,6 +6,7 @@ import org.deeplearning4j.nn.conf.GradientNormalization;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.conf.layers.*;
+import org.deeplearning4j.nn.conf.layers.misc.FrozenLayerWithBackprop;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
 import org.deeplearning4j.optimize.listeners.PerformanceListener;
@@ -16,20 +17,18 @@ import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.learning.config.Adam;
 import org.nd4j.linalg.learning.config.IUpdater;
-import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.util.Arrays;
 
 public class App {
     private static final double LEARNING_RATE = 0.0002;
-    //private static final double L2 = 0.005;
     private static final double GRADIENT_THRESHOLD = 100.0;
     private static final IUpdater UPDATER = Adam.builder().learningRate(LEARNING_RATE).beta1(0.5).build();
-    private static final IUpdater UPDATER_ZERO = Sgd.builder().learningRate(0.0).build();
 
     private static JFrame frame;
     private static JPanel panel;
@@ -57,7 +56,6 @@ public class App {
                 .updater(UPDATER)
                 .gradientNormalization(GradientNormalization.RenormalizeL2PerLayer)
                 .gradientNormalizationThreshold(GRADIENT_THRESHOLD)
-                //.l2(L2)
                 .weightInit(WeightInit.XAVIER)
                 .activation(Activation.IDENTITY)
                 .list(genLayers())
@@ -66,18 +64,18 @@ public class App {
         return conf;
     }
 
-    private static Layer[] disLayers(IUpdater updater) {
-        return new Layer[] {
-                new DenseLayer.Builder().nIn(784).nOut(1024).updater(updater).build(),
+    private static Layer[] disLayers() {
+        return new Layer[]{
+                new DenseLayer.Builder().nIn(784).nOut(1024).build(),
                 new ActivationLayer.Builder(new ActivationLReLU(0.2)).build(),
                 new DropoutLayer.Builder(1 - 0.5).build(),
-                new DenseLayer.Builder().nIn(1024).nOut(512).updater(updater).build(),
+                new DenseLayer.Builder().nIn(1024).nOut(512).build(),
                 new ActivationLayer.Builder(new ActivationLReLU(0.2)).build(),
                 new DropoutLayer.Builder(1 - 0.5).build(),
-                new DenseLayer.Builder().nIn(512).nOut(256).updater(updater).build(),
+                new DenseLayer.Builder().nIn(512).nOut(256).build(),
                 new ActivationLayer.Builder(new ActivationLReLU(0.2)).build(),
                 new DropoutLayer.Builder(1 - 0.5).build(),
-                new OutputLayer.Builder(LossFunctions.LossFunction.XENT).nIn(256).nOut(1).activation(Activation.SIGMOID).updater(updater).build()
+                new OutputLayer.Builder(LossFunctions.LossFunction.XENT).nIn(256).nOut(1).activation(Activation.SIGMOID).build()
         };
     }
 
@@ -87,10 +85,9 @@ public class App {
                 .updater(UPDATER)
                 .gradientNormalization(GradientNormalization.RenormalizeL2PerLayer)
                 .gradientNormalizationThreshold(GRADIENT_THRESHOLD)
-                //.l2(L2)
                 .weightInit(WeightInit.XAVIER)
                 .activation(Activation.IDENTITY)
-                .list(disLayers(UPDATER))
+                .list(disLayers())
                 .build();
 
         return conf;
@@ -98,7 +95,14 @@ public class App {
 
     private static MultiLayerConfiguration gan() {
         Layer[] genLayers = genLayers();
-        Layer[] disLayers = disLayers(UPDATER_ZERO); // Freeze discriminator layers in combined network.
+        Layer[] disLayers = Arrays.stream(disLayers())
+                .map((layer) -> {
+                    if (layer instanceof DenseLayer || layer instanceof OutputLayer) {
+                        return new FrozenLayerWithBackprop(layer);
+                    } else {
+                        return layer;
+                    }
+                }).toArray(Layer[]::new);
         Layer[] layers = ArrayUtils.addAll(genLayers, disLayers);
 
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
@@ -106,7 +110,6 @@ public class App {
                 .updater(UPDATER)
                 .gradientNormalization(GradientNormalization.RenormalizeL2PerLayer)
                 .gradientNormalizationThreshold(GRADIENT_THRESHOLD)
-                //.l2(L2)
                 .weightInit(WeightInit.XAVIER)
                 .activation(Activation.IDENTITY)
                 .list(layers)
@@ -135,16 +138,16 @@ public class App {
 
         trainData.reset();
 
-        while (true) {
-            int j = 0;
+        int j = 0;
+        for (int i = 0; i < 10; i++) {
             while (trainData.hasNext()) {
                 j++;
 
                 // generate data
                 INDArray real = trainData.next().getFeatures().muli(2).subi(1);
-                int batchSize = (int)real.shape()[0];
+                int batchSize = (int) real.shape()[0];
 
-                INDArray fakeIn = Nd4j.rand(new int[]{batchSize,  100});
+                INDArray fakeIn = Nd4j.rand(batchSize, 100);
                 INDArray fake = gan.activateSelectedLayers(0, gen.getLayers().length - 1, fakeIn);
 
                 DataSet realSet = new DataSet(real, Nd4j.zeros(batchSize, 1));
@@ -154,19 +157,12 @@ public class App {
 
                 dis.fit(data);
                 dis.fit(data);
-                //dis.fit(realSet);
-                //dis.fit(fakeSet);
 
                 // Update the discriminator in the GAN network
                 updateGan(gen, dis, gan);
 
-                gan.fit(new DataSet(Nd4j.rand(new int[] { batchSize, 100}), Nd4j.zeros(batchSize, 1)));
-                //gan.fit(fakeSet2);
+                gan.fit(new DataSet(Nd4j.rand(batchSize, 100), Nd4j.zeros(batchSize, 1)));
 
-
-
-                // Copy the GANs generator to gen.
-                //updateGen(gen, gan);
 
                 if (j % 10 == 1) {
                     System.out.println("Iteration " + j + " Visualizing...");
@@ -184,6 +180,11 @@ public class App {
             }
             trainData.reset();
         }
+
+        // Copy the GANs generator to gen.
+        updateGen(gen, gan);
+
+        gen.save(new File("mnist-mlp-generator.dlj"));
     }
 
     private static void copyParams(MultiLayerNetwork gen, MultiLayerNetwork dis, MultiLayerNetwork gan) {
@@ -226,8 +227,8 @@ public class App {
 
         panel.removeAll();
 
-        for (int i = 0; i < samples.length; i++) {
-            panel.add(getImage(samples[i]));
+        for (INDArray sample : samples) {
+            panel.add(getImage(sample));
         }
 
         frame.revalidate();
